@@ -1,0 +1,32 @@
+name: Surf forecast
+
+on:
+  schedule:
+    # Maandag- en vrijdagochtend, 06:00 UTC. Dat is 07:00 NL-tijd in de
+    # winter en 08:00 NL-tijd in de zomer (GitHub Actions cron draait
+    # altijd in UTC en houdt geen rekening met zomer-/wintertijd).
+    - cron: "0 6 * * 1,5"
+  workflow_dispatch: {}
+
+jobs:
+  send-forecast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Send forecast e-mail
+        env:
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
+          TO_EMAIL: ${{ secrets.TO_EMAIL }}
+        run: python scripts/surf_forecast.py
