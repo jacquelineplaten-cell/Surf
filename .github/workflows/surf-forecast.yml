@@ -30,3 +30,4 @@ jobs:
           FROM_EMAIL: ${{ secrets.FROM_EMAIL }}
           TO_EMAIL: ${{ secrets.TO_EMAIL }}
         run: python scripts/surf_forecast.py
+# ping 1787980102
