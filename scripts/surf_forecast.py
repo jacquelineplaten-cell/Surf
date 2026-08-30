@@ -124,6 +124,15 @@ def fetch_spot_data(spot):
 # ---------------------------------------------------------------------------
 
 def evaluate_hour(spot, h):
+    """Beoordeelt een uur met een 1-5 sterren score voor een intermediate surfer.
+
+    1 ster: golfhoogte zit sowieso buiten de behapbare range voor dit niveau
+    (te vlak, of te grof/hol) — de rest doet er dan niet meer toe.
+    2-5 sterren: golfhoogte is behapbaar; de rest (wind, periode, swell-
+    richting) bepaalt een kwaliteitsscore 0-1 die naar sterren wordt vertaald.
+    Wind weegt het zwaarst (bepaalt of het water schoon of rommelig is),
+    dan golfhoogte t.o.v. de 'sweet spot', dan periode, dan swellrichting.
+    """
     wave = h.get("wave_height")
     wind_speed = h.get("wind_speed")
     wind_dir = h.get("wind_dir")
@@ -132,67 +141,94 @@ def evaluate_hour(spot, h):
     swell_dir = h.get("swell_dir")
 
     if wave is None or wind_speed is None:
-        return "nee", ["geen data"]
+        return 1, ["geen data"]
 
     if wave < spot["wave_min"]:
-        return "nee", [f"te weinig power ({wave:.1f} m), waarschijnlijk vlak/soep"]
+        return 1, [f"te weinig power ({wave:.1f} m), waarschijnlijk vlak/soep"]
     if wave > spot["wave_max"]:
-        return "nee", [f"{wave:.1f} m, {spot['note_too_big']}"]
+        return 1, [f"{wave:.1f} m, {spot['note_too_big']}"]
 
-    wind_diff = circular_diff(wind_dir, spot["ideal_wind_dir"])
     reasons = []
 
+    # Golfhoogte: piekt in de 'sweet spot' op 60% van de behapbare range
+    # (net iets boven het midden — intermediate surfers mogen best wat power).
+    span = spot["wave_max"] - spot["wave_min"]
+    sweet = spot["wave_min"] + 0.6 * span
+    wave_q = max(0.0, 1 - abs(wave - sweet) / span)
+
+    wind_diff = circular_diff(wind_dir, spot["ideal_wind_dir"])
     if wind_diff <= 55:
-        if wind_speed <= 30:
-            verdict = "top"
+        if wind_speed <= 25:
+            wind_q = 1.0
             reasons.append("aflandige wind, dus schone golven")
+        elif wind_speed <= 35:
+            wind_q = 0.6
+            reasons.append(f"aflandig maar stevig ({wind_speed:.0f} km/u), lastiger peddelen")
         else:
-            verdict = "twijfel"
-            reasons.append(f"aflandig maar hard ({wind_speed:.0f} km/u), lastig peddelen")
+            wind_q = 0.3
+            reasons.append(f"aflandig maar erg hard ({wind_speed:.0f} km/u)")
     elif wind_diff >= 130:
-        if wind_speed <= 12:
-            verdict = "goed"
+        if wind_speed <= 10:
+            wind_q = 0.5
             reasons.append("aanlandig maar zwak, water blijft redelijk rustig")
-        elif wind_speed <= 20:
-            verdict = "twijfel"
+        elif wind_speed <= 18:
+            wind_q = 0.25
             reasons.append("aanlandige wind, verwacht wat chop")
         else:
-            verdict = "nee"
+            wind_q = 0.0
             reasons.append(f"stevige aanlandige wind ({wind_speed:.0f} km/u), wordt een klotsbak")
     else:
-        if wind_speed <= 22:
-            verdict = "goed"
+        if wind_speed <= 15:
+            wind_q = 0.8
             reasons.append("zijwind, over het algemeen prima surfbaar")
+        elif wind_speed <= 25:
+            wind_q = 0.5
+            reasons.append("stevige zijwind, kan wat rommelig water geven")
         else:
-            verdict = "twijfel"
-            reasons.append("stevige zijwind, kan rommelig water geven")
+            wind_q = 0.2
+            reasons.append(f"harde zijwind ({wind_speed:.0f} km/u), verwacht rommel")
 
-    if verdict == "nee":
-        return verdict, reasons
-
-    if period is not None:
-        if period < 5 and verdict in ("top", "goed"):
-            verdict = "twijfel"
-            reasons.append(f"korte periode ({period:.0f} s), dus minder power")
-        elif period >= 8 and verdict == "goed":
-            verdict = "top"
-            reasons.append(f"lange periode ({period:.0f} s), veel energie in de golven")
+    if period is None:
+        period_q = 0.5
+    elif period < 5:
+        period_q = 0.2
+        reasons.append(f"korte periode ({period:.0f} s), dus minder power")
+    elif period < 7:
+        period_q = 0.6
+    elif period < 9:
+        period_q = 0.9
+        reasons.append(f"nette periode ({period:.0f} s), lekker wat power")
+    else:
+        period_q = 1.0
+        reasons.append(f"lange periode ({period:.0f} s), veel energie in de golven")
 
     if swell_dir is not None and not in_range(swell_dir, *spot["ideal_swell_dir"]):
-        if verdict == "top":
-            verdict = "goed"
-        elif verdict == "goed":
-            verdict = "twijfel"
+        dir_q = 0.4
         reasons.append("swellrichting niet helemaal ideaal voor deze plek")
+    else:
+        dir_q = 1.0
 
-    if gust is not None and gust >= 45 and verdict != "nee":
-        verdict = "twijfel"
+    if gust is not None and gust >= 45:
+        wind_q = min(wind_q, 0.3)
         reasons.append(f"pittige windstoten tot {gust:.0f} km/u")
 
-    return verdict, reasons
+    quality = 0.4 * wind_q + 0.3 * wave_q + 0.2 * period_q + 0.1 * dir_q
 
+    if quality >= 0.75:
+        stars = 5
+    elif quality >= 0.5:
+        stars = 4
+    elif quality >= 0.25:
+        stars = 3
+    else:
+        stars = 2
 
-RANK = {"nee": 0, "twijfel": 1, "goed": 2, "top": 3}
+    # Bij echt slechte (harde aanlandige) wind kan het nooit meer dan 2
+    # sterren worden, ongeacht hoe goed golfhoogte/periode verder zijn.
+    if wind_q == 0.0:
+        stars = min(stars, 2)
+
+    return stars, reasons
 
 
 def evaluate_spot_day(spot, hours, day_str, sunrise, sunset):
@@ -201,19 +237,18 @@ def evaluate_spot_day(spot, hours, day_str, sunrise, sunset):
     if not daylight:
         daylight = day_hours
     if not daylight:
-        return None
+        return {"stars": 1, "window": None, "window_mid_time": None, "wave_height": None,
+                "swell_period": None, "wind_speed": None, "wind_dir": None, "reasons": ["geen data"]}
 
     evals = [(t, *evaluate_hour(spot, hours[t])) for t in daylight]
-    best_rank = max((RANK[v] for _, v, _ in evals), default=0)
-    if best_rank <= RANK["nee"]:
-        return None
+    best_stars = max(stars for _, stars, _ in evals)
 
     # Langste aaneengesloten reeks uren op het beste niveau, zodat we geen
     # los uur aan het begin en een los uur aan het eind samenvoegen tot een
     # nepvenster dat de uren ertussen ook meepakt.
     runs, current = [], []
     for e in evals:
-        if RANK[e[1]] == best_rank:
+        if e[1] == best_stars:
             current.append(e)
         else:
             if current:
@@ -224,7 +259,6 @@ def evaluate_spot_day(spot, hours, day_str, sunrise, sunset):
     best_run = max(runs, key=len)
 
     start, end = best_run[0][0][-5:], best_run[-1][0][-5:]
-    verdict_word = {3: "top", 2: "goed", 1: "twijfel"}[best_rank]
 
     # Neem het middelste uur van dit venster als representatief moment, en
     # gebruik ALLEEN de redenen van dat ene uur (niet gemixt met andere uren
@@ -234,8 +268,7 @@ def evaluate_spot_day(spot, hours, day_str, sunrise, sunset):
     _, reasons = evaluate_hour(spot, mid)
 
     return {
-        "verdict": verdict_word,
-        "rank": best_rank,
+        "stars": best_stars,
         "window": (start, end),
         "window_mid_time": mid_t,
         "wave_height": mid.get("wave_height"),
@@ -340,71 +373,82 @@ FACTOIDS = [
 ]
 
 
+def star_string(n):
+    n = max(1, min(5, n))
+    return "★" * n + "☆" * (5 - n)
+
+
+def cap(s):
+    return s[0].upper() + s[1:] if s else s
+
+
+MOOD = {
+    5: ["Dit wordt genieten", "Dit ziet er echt leuk uit", "Hier zou ik voor gaan"],
+    4: ["Dit kan een hele leuke sessie worden", "Mooie kans", "Dit is het proberen meer dan waard"],
+    3: ["Dit kan een oké sessie worden", "Prima optie, geen topdag maar wel de moeite waard"],
+    2: ["Twijfelachtig", "Kan, maar reken er niet op"],
+    1: ["Niet doen", "Ik zou het water laten"],
+}
+
+
 def narrate_day(d, spot_results, tide_events):
     day_name = DUTCH_DAYS[d.weekday()]
-    heading = f"*{day_name.capitalize()} {d.day}/{d.month}*"
-
-    usable = {name: r for name, r in spot_results.items() if r is not None}
-    if not usable:
-        return f"{heading}\nWeinig tot geen bruikbare golven bij Scheveningen Zuid of Vlugtenburg. Ik zou hem overslaan."
+    day_best_stars = max(r["stars"] for r in spot_results.values())
+    heading = f"*{day_name.capitalize()} {d.day}/{d.month} — {star_string(day_best_stars)}*"
 
     lines = [heading]
-    if tide_events:
+
+    # Getij is alleen de moeite waard om te melden als de dag het ook echt
+    # waard is (meer dan 3 sterren) — anders is het ruis.
+    if day_best_stars > 3 and tide_events:
         tide_overview = ", ".join(f"{kind}water rond {t}" for t, kind in tide_events)
         lines.append(f"Getij: {tide_overview}.")
 
-    ranked = sorted(usable.items(), key=lambda kv: kv[1]["rank"], reverse=True)
-
-    mood = {
-        "top": ["Dit wordt genieten", "Dit ziet er echt leuk uit", "Hier zou ik voor gaan"],
-        "goed": ["Dit kan een leuke sessie worden", "Prima optie", "Dit is het proberen waard"],
-        "twijfel": ["Het kan, maar het is geen zekerheidje", "Twijfelgeval, maar zeker de moeite waard om te checken"],
-    }
+    ranked = sorted(spot_results.items(), key=lambda kv: kv[1]["stars"], reverse=True)
 
     for spot_name, r in ranked:
-        opener = random.choice(mood[r["verdict"]])
+        stars = r["stars"]
+        star_txt = star_string(stars)
+
+        if stars <= 2 or r["window"] is None:
+            reason = r["reasons"][0] if r["reasons"] else "geen bruikbare data"
+            lines.append(f"{star_txt} {spot_name}: {random.choice(MOOD[stars])} — {reason}.")
+            continue
+
+        opener = random.choice(MOOD[stars])
         start, end = r["window"]
+        window_txt = start if start == end else f"{start}–{end}"
         wave = r["wave_height"]
         period = r["swell_period"]
         wind_dir_word = compass(r["wind_dir"])
         wind_speed = r["wind_speed"]
 
-        tide_phrase = describe_tide_for_window(r["window_mid_time"][-5:], tide_events)
-        tide_text = f" {tide_phrase.capitalize()}." if tide_phrase else ""
+        tide_text = ""
+        if stars > 3:
+            tide_phrase = describe_tide_for_window(r["window_mid_time"][-5:], tide_events)
+            if tide_phrase:
+                tide_text = f" {cap(tide_phrase)}."
 
         reason_text = "; ".join(r["reasons"])
         wave_txt = f"{wave:.1f} m" if wave is not None else "onbekende hoogte"
         period_txt = f", {period:.0f} s periode" if period else ""
 
         lines.append(
-            f"{opener} bij {spot_name}: rond {start}–{end} zie ik ongeveer {wave_txt}{period_txt}, "
-            f"met wind uit het {wind_dir_word} ({wind_speed:.0f} km/u). {reason_text.capitalize()}."
+            f"{star_txt} {spot_name}: {opener} — rond {window_txt} zie ik ongeveer {wave_txt}{period_txt}, "
+            f"met wind uit het {wind_dir_word} ({wind_speed:.0f} km/u). {cap(reason_text)}."
             f"{tide_text}"
         )
 
-    skipped = [name for name, r in spot_results.items() if r is None]
-    if skipped:
-        lines.append(f"({', '.join(skipped)} zie ik voor {day_name} niet zitten voor jouw niveau.)")
-
-    return "\n".join(lines)
+    return "\n".join(lines), day_best_stars
 
 
 def build_email_body(today):
     lines_html = []
     lines_plain = []
 
-    intro = (
-        "Halloooo! Hier je persoonlijke surf forecast voor Scheveningen Zuid en "
-        "Vlugtenburg, afgestemd op ervaren beginner/intermediate niveau. Automatisch "
-        "gegenereerd op basis van Open-Meteo data, dus check voor vertrek altijd nog "
-        "even een app of webcam. Ik neem je mee door de komende dagen 👇"
-    )
-    lines_plain.append(intro)
-    lines_html.append(f"<p>{intro}</p>")
-
     spot_data = {name: fetch_spot_data(spot) for name, spot in SPOTS.items()}
 
-    any_good_day = False
+    days_info = []
     for i in range(DAYS_AHEAD):
         d = today + timedelta(days=i)
         day_str = d.isoformat()
@@ -419,18 +463,43 @@ def build_email_body(today):
             spot_results[name] = evaluate_spot_day(spot, hours, day_str, sunrise, sunset)
             tide_events_by_spot[name] = find_tide_events(hours, day_str, next_day_str)
 
-        if any(r is not None for r in spot_results.values()):
-            any_good_day = True
-
         main_tide = tide_events_by_spot.get("Scheveningen Zuid") or next(iter(tide_events_by_spot.values()), [])
-        text = narrate_day(d, spot_results, main_tide)
-        lines_plain.append("\n" + text)
-        lines_html.append("<p>" + text.replace("\n", "<br>").replace("*", "") + "</p>")
+        day_best_stars = max(r["stars"] for r in spot_results.values())
+        days_info.append({"date": d, "spot_results": spot_results, "tide_events": main_tide, "stars": day_best_stars})
 
-    if not any_good_day:
-        closing = "Kortom: komende dagen weinig kans op leuke golven voor jouw niveau. Volgende update maandag of vrijdag!"
+    # --- Intro: meteen zeggen of en welke dagen 3-5 sterren hebben ---
+    good_days = [info for info in days_info if info["stars"] >= 3]
+    if good_days:
+        summary_bits = ", ".join(
+            f"{DUTCH_DAYS[info['date'].weekday()].capitalize()} {star_string(info['stars'])}"
+            for info in good_days
+        )
+        intro = (
+            f"Halloooo! Deze ronde is het de moeite waard om te gaan op: {summary_bits}. "
+            "Hieronder per dag het hele verhaal met onderbouwing. Automatisch gegenereerd op "
+            "basis van Open-Meteo data, dus check voor vertrek altijd nog even een app of webcam."
+        )
     else:
+        intro = (
+            "Halloooo! Deze ronde zitten er geen dagen bij met 3 sterren of meer voor "
+            "Scheveningen Zuid of Vlugtenburg — ik zou het water laten voor jouw niveau. "
+            "Hieronder toch even per dag waarom."
+        )
+    lines_plain.append(intro)
+    lines_html.append(f"<p>{intro}</p>")
+
+    for info in days_info:
+        text, _ = narrate_day(info["date"], info["spot_results"], info["tide_events"])
+        lines_plain.append("\n" + text)
+        html_block = text.replace("\n", "<br>").replace("*", "")
+        html_block = html_block.replace("★", '<span style="color:#d4a017">★</span>')
+        html_block = html_block.replace("☆", '<span style="color:#ccc">☆</span>')
+        lines_html.append("<p>" + html_block + "</p>")
+
+    if good_days:
         closing = "Have fun en check voor je vertrekt altijd nog even de actuele stand van zaken. Volgende update maandag of vrijdag!"
+    else:
+        closing = "Volgende update maandag of vrijdag — hopelijk dan meer goed nieuws!"
     lines_plain.append("\n" + closing)
     lines_html.append(f"<p>{closing}</p>")
 
@@ -438,7 +507,13 @@ def build_email_body(today):
     lines_plain.append("\n" + factoid)
     lines_html.append(f"<p><em>{factoid}</em></p>")
 
-    return "\n".join(lines_plain), "".join(lines_html)
+    if good_days:
+        best = max(good_days, key=lambda i: i["stars"])
+        subject_bit = f"beste dag {DUTCH_DAYS[best['date'].weekday()].capitalize()} {star_string(best['stars'])}"
+    else:
+        subject_bit = "geen 3+ sterren dagen"
+
+    return "\n".join(lines_plain), "".join(lines_html), subject_bit
 
 
 def send_email(subject, plain_text, html_text):
@@ -466,8 +541,8 @@ def main():
     # Gebruik de datum in Amsterdamse tijd, ook als de runner in UTC draait.
     today = datetime.now(AMSTERDAM).date()
 
-    plain_text, html_text = build_email_body(today)
-    subject = f"\U0001F30A Surf forecast Scheveningen Zuid & Vlugtenburg — {today.strftime('%d-%m')}"
+    plain_text, html_text, subject_bit = build_email_body(today)
+    subject = f"\U0001F30A Surf forecast {today.strftime('%d-%m')} — {subject_bit}"
 
     if "--dry-run" in sys.argv:
         print(subject)
