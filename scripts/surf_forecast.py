@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Persoonlijke surf forecast voor Scheveningen Zuid en Vlugtenburg strand.
+Persoonlijke surf forecast voor Scheveningen Noord (Hart Beach) en Vlugtenburg strand.
 
 Haalt golf-, wind- en getijdata op bij Open-Meteo (gratis, geen API key nodig),
 beoordeelt de omstandigheden voor een gevorderde beginner / intermediate surfer,
@@ -36,14 +36,14 @@ DUTCH_DAYS = ["maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterda
 # die voor een gevorderde beginner/intermediate surfer leuk en behapbaar is.
 # ---------------------------------------------------------------------------
 SPOTS = {
-    "Scheveningen Zuid": {
-        "lat": 52.095,
-        "lon": 4.268,
-        "ideal_wind_dir": 45,       # noordoost = aflandig
-        "ideal_swell_dir": (270, 360),  # west tot noord, optimaal noordwest
-        "wave_min": 0.35,
-        "wave_max": 1.2,
-        "note_too_big": "dat wordt hol en snel, meer iets voor gevorderde surfers",
+    "Scheveningen Noord (Hart Beach)": {
+        "lat": 52.1036,
+        "lon": 4.2656,
+        "ideal_wind_dir": 135,      # zuidoost = aflandig
+        "ideal_swell_dir": (225, 360),  # zuidwest tot noord, optimaal noordwest
+        "wave_min": 0.3,
+        "wave_max": 1.1,
+        "note_too_big": "wordt al snel een closeout op deze mellow bank bij de havenhoofden",
     },
     "Vlugtenburg": {
         "lat": 52.001,
@@ -463,7 +463,7 @@ def build_email_body(today):
             spot_results[name] = evaluate_spot_day(spot, hours, day_str, sunrise, sunset)
             tide_events_by_spot[name] = find_tide_events(hours, day_str, next_day_str)
 
-        main_tide = tide_events_by_spot.get("Scheveningen Zuid") or next(iter(tide_events_by_spot.values()), [])
+        main_tide = tide_events_by_spot.get("Scheveningen Noord (Hart Beach)") or next(iter(tide_events_by_spot.values()), [])
         day_best_stars = max(r["stars"] for r in spot_results.values())
         days_info.append({"date": d, "spot_results": spot_results, "tide_events": main_tide, "stars": day_best_stars})
 
@@ -482,7 +482,7 @@ def build_email_body(today):
     else:
         intro = (
             "Halloooo! Deze ronde zitten er geen dagen bij met 3 sterren of meer voor "
-            "Scheveningen Zuid of Vlugtenburg — ik zou het water laten voor jouw niveau. "
+            "Scheveningen Noord of Vlugtenburg — ik zou het water laten voor jouw niveau. "
             "Hieronder toch even per dag waarom."
         )
     lines_plain.append(intro)

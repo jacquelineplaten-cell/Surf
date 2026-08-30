@@ -1,8 +1,8 @@
-# Surf forecast — Scheveningen Zuid & Vlugtenburg
+# Surf forecast — Scheveningen Noord & Vlugtenburg
 
 Een gratis, geautomatiseerde surf forecast per e-mail, 2x per week (maandag- en
 vrijdagochtend), speciaal voor jouw niveau (ervaren beginner / intermediate)
-en jouw twee vaste spots: **Scheveningen Zuid** en **Vlugtenburg**.
+en jouw twee vaste spots: **Scheveningen Noord (Hart Beach)** en **Vlugtenburg**.
 
 Geen betaald abonnement nodig: de golf-, wind- en getijdata komen gratis van
 [Open-Meteo](https://open-meteo.com/) en het versturen draait gratis op
